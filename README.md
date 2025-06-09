@@ -1,5 +1,6 @@
 # Project-Sistem-Hidroponik
 **Deskripsi Proyek: Smart Hidroponik**
+
 Proyek Smart Hidroponik merupakan sistem pertanian modern berbasis teknologi yang dirancang untuk memantau dan mengatur kondisi tanaman hidroponik secara otomatis dan efisien. Sistem ini menggabungkan teknologi Internet of Things (IoT), sensor lingkungan, dan otomasi untuk menciptakan lingkungan tumbuh optimal bagi tanaman tanpa memerlukan tanah.
 
 Fitur utama dari Smart Hidroponik meliputi:
