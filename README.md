@@ -13,5 +13,7 @@ dengan Dosen Pengampu Muhamad Radzi Rathomi, S.Kom., M.Cs
 
 Anggota Kelompok :
 2301020092 - Alfian Seftina Sari 
+
 2301020028 - Arya Putra Santoso
+
 2301020114 - M. Febrian
