@@ -1,0 +1,244 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ESP32Servo.h>
+#include "DHT.h"
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+// === Pin Konfigurasi ===
+#define DHTPIN 15           // DHT22 di pin GPIO15
+#define DHTTYPE DHT22
+#define LDRPIN 34           // LDR ke pin analog GPIO34
+#define MQ5PIN 35           // MQ2 ke pin analog GPIO35
+#define LEDPIN 14           // PWM motor simulasi LED di GPIO14
+#define SERVOKATUP 13       // Servo katup air nutrisi
+#define SERVOPENEDUH 12     // Servo peneduh otomatis
+#define ONE_WIRE_BUS 4      // DS18B20 di GPIO4
+
+// === Inisialisasi Objek ===
+DHT dht(DHTPIN, DHTTYPE);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+Servo servoKatup;
+Servo servoPeneduh;
+
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+// --- WiFi & Firebase ---
+const char* ssid = "p";
+const char* password = "12345678";
+const char* firebaseHost = "smarthidroponik-90d91-default-rtdb.firebaseio.com";
+const char* firebaseAuth = "2Z9pHkS9wNnBw5kUSJoCfXullx25Eb39u1zij8a5";
+
+// Fungsi kirim data ke Firebase
+bool sendDataToFirebase(const String& path, const String& jsonData) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi belum terhubung");
+    return false;
+  }
+  HTTPClient http;
+  String url = String("https://") + firebaseHost + "/" + path + ".json?auth=" + firebaseAuth;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  int httpResponseCode = http.PUT(jsonData);
+  if (httpResponseCode == 200) {
+    Serial.println("Data berhasil dikirim: " + jsonData);
+    http.end();
+    return true;
+  } else {
+    Serial.print("Error kirim data. HTTP code: ");
+    Serial.println(httpResponseCode);
+    http.end();
+    return false;
+  }
+}
+
+// Fungsi ambil kontrol dari Firebase
+String getFirebaseValue(const String& path) {
+  if (WiFi.status() != WL_CONNECTED) return "";
+  HTTPClient http;
+  String url = String("https://") + firebaseHost + "/" + path + ".json?auth=" + firebaseAuth;
+  http.begin(url);
+  int httpCode = http.GET();
+  String payload = "";
+  if (httpCode == 200) payload = http.getString();
+  http.end();
+  return payload;
+}
+
+void inisialisasiKontrolFirebase() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  String url = String("https://") + firebaseHost + "/kontrol.json?auth=" + firebaseAuth;
+
+  http.begin(url);
+  int httpCode = http.GET();
+
+  if (httpCode == 200) {
+    String payload = http.getString();
+    if (payload == "null") {
+      Serial.println("Kontrol belum ada, menginisialisasi...");
+
+      // Isi default
+      String defaultKontrol = "{\"led\":1,\"katup\":0,\"peneduh\":90}";
+
+      HTTPClient putHttp;
+      putHttp.begin(url);
+      putHttp.addHeader("Content-Type", "application/json");
+      int putCode = putHttp.PUT(defaultKontrol);
+      if (putCode == 200) {
+        Serial.println("Kontrol berhasil diinisialisasi.");
+      } else {
+        Serial.print("Gagal inisialisasi kontrol. Kode: ");
+        Serial.println(putCode);
+      }
+      putHttp.end();
+    } else {
+      Serial.println("Data kontrol sudah ada.");
+    }
+  } else {
+    Serial.print("Gagal cek kontrol. HTTP code: ");
+    Serial.println(httpCode);
+  }
+
+  http.end();
+}
+
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+  sensors.begin();
+  lcd.init(); lcd.backlight();
+  pinMode(LEDPIN, OUTPUT);
+  analogReadResolution(10);
+  servoKatup.attach(SERVOKATUP);
+  servoPeneduh.attach(SERVOPENEDUH);
+  servoKatup.write(0);
+  servoPeneduh.write(90);
+
+  WiFi.begin(ssid, password);
+  Serial.print("Menghubungkan WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500); Serial.print(".");
+  }
+  Serial.println("\nWiFi terhubung, IP: " + WiFi.localIP().toString());
+  lcd.setCursor(0, 0);
+  lcd.print("Sistem Hidroponik");
+  delay(2000); lcd.clear();
+
+  inisialisasiKontrolFirebase();
+}
+
+void bacaKontrolDariFirebase() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  String url = String("https://") + firebaseHost + "/kontrol.json?auth=" + firebaseAuth;
+
+  http.begin(url);
+  int httpCode = http.GET();
+
+  if (httpCode == 200) {
+    String payload = http.getString();
+    Serial.println("Data kontrol: " + payload);
+
+    // Parsing manual (sederhana)
+    int ledIndex = payload.indexOf("\"led\":");
+    int katupIndex = payload.indexOf("\"katup\":");
+    int peneduhIndex = payload.indexOf("\"peneduh\":");
+
+    if (ledIndex != -1) {
+      int ledVal = payload.substring(ledIndex + 6, payload.indexOf(",", ledIndex)).toInt();
+      digitalWrite(LEDPIN, ledVal ? HIGH : LOW);
+      Serial.print("Kontrol LED: "); Serial.println(ledVal);
+    }
+
+    if (katupIndex != -1) {
+      int katupVal = payload.substring(katupIndex + 8, payload.indexOf(",", katupIndex)).toInt();
+      servoKatup.write(katupVal);
+      Serial.print("Kontrol Katup: "); Serial.println(katupVal);
+    }
+
+    if (peneduhIndex != -1) {
+      int peneduhVal = payload.substring(peneduhIndex + 11, payload.indexOf("}", peneduhIndex)).toInt();
+      servoPeneduh.write(peneduhVal);
+      Serial.print("Kontrol Peneduh: "); Serial.println(peneduhVal);
+    }
+  } else {
+    Serial.print("Gagal baca kontrol. Kode: ");
+    Serial.println(httpCode);
+  }
+
+  http.end();
+}
+
+
+
+void loop() {
+  float suhu = dht.readTemperature();
+  float kelembapan = dht.readHumidity();
+  int cahaya = analogRead(LDRPIN);
+  int gas = analogRead(MQ5PIN);
+  sensors.requestTemperatures();
+  float suhuAir = sensors.getTempCByIndex(0);
+
+  Serial.printf("Suhu: %.1f *C | SuhuAir: %.1f *C | Kelembapan: %.1f %% | Cahaya: %d | Gas: %d\n",
+    suhu, suhuAir, kelembapan, cahaya, gas);
+
+  lcd.setCursor(0, 0);
+  lcd.print("S:"); lcd.print(suhu, 1);
+  lcd.print("C H:"); lcd.print(kelembapan, 0); lcd.print("%");
+  lcd.setCursor(0, 1);
+  lcd.print("LA:"); lcd.print(cahaya);
+  lcd.print(" GA:"); lcd.print(gas);
+
+  // --- Kontrol Otomatis ---
+  if (suhu > 30 || gas > 700) {
+    analogWrite(LEDPIN, 200);
+  } else if (kelembapan < 50) {
+    analogWrite(LEDPIN, 255);
+  } else {
+    analogWrite(LEDPIN, 0);
+  }
+  if ((suhu > 30 && kelembapan < 50) || suhuAir > 28) {
+    servoKatup.write(90);
+  } else {
+    servoKatup.write(0);
+  }
+  if (cahaya > 800) {
+    servoPeneduh.write(0);
+  } else {
+    servoPeneduh.write(90);
+  }
+
+  bacaKontrolDariFirebase();
+
+  // --- Kirim Data ---
+  String jsonData = "{";
+  jsonData += "\"suhu\":" + String(suhu, 1) + ",";
+  jsonData += "\"kelembapan\":" + String(kelembapan, 1) + ",";
+  jsonData += "\"cahaya\":" + String(cahaya) + ",";
+  jsonData += "\"gas\":" + String(gas) + ",";
+  jsonData += "\"suhuAir\":" + String(suhuAir, 1);
+  jsonData += "}";
+  sendDataToFirebase("sensor", jsonData);
+
+  // --- Ambil dan Jalankan Perintah Kontrol dari Firebase ---
+  String ledControl = getFirebaseValue("kontrol/led");
+  if (ledControl == "true") digitalWrite(LEDPIN, HIGH);
+  else if (ledControl == "false") digitalWrite(LEDPIN, LOW);
+
+  String servoKatupControl = getFirebaseValue("kontrol/servoKatup");
+  if (servoKatupControl.length() > 0) servoKatup.write(servoKatupControl.toInt());
+
+  String servoPeneduhControl = getFirebaseValue("kontrol/servoPeneduh");
+  if (servoPeneduhControl.length() > 0) servoPeneduh.write(servoPeneduhControl.toInt());
+
+  
+  
+  delay(5000);
+}
